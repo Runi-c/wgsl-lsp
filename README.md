@@ -13,3 +13,10 @@ This project is a WIP WGSL language server that hooks directly into [naga](https
 - [no issue yet] - Naga [`Module`](https://docs.rs/naga/0.19.2/naga/struct.Module.html)s contain lots of spans and semantic information, but it's incomplete in many ways for semantic highlighting. [`Function`](https://docs.rs/naga/0.19.2/naga/struct.Function.html)s have spans corresponding to their entire definition, but the spans for the name, arguments, argument types, and return type must all be parsed out manually. Similarly, [`Expression`](https://docs.rs/naga/0.19.2/naga/enum.Expression.html)s contain a lot of useful info, but they stop short of being very useful for semantic highlighting due to lack of sub-spans or any kind of AST. One example is when an [`Expression::Math`](https://docs.rs/naga/0.19.2/naga/enum.Expression.html#variant.Math) refers to a function parameter, that reference tells you nothing about where the function parameter appears in the expression source code.
 - [[issue]](https://github.com/bevyengine/naga_oil/issues/76) - Naga-Oil doesn't make it easy to determine error source locations when constructing modules.
 - [no issue yet] - Naga-Oil can only report a single error for an entire dependency tree. If there's an error in any ancestor, the current file you're looking at can't be validated.
+
+### How to Run on VSCode
+
+1. `cargo install --path ./` in this directory to install `wgsl-lsp` as a binary
+2. Clone a language client extension that can point to `wgsl-lsp` - there's a minimal one here: https://github.com/Runi-c/wgsl-lsp-client
+3. Open that folder in vscode and hit F5 to launch the extension in an extension host window
+4. Open a workspace containing one or more WGSL files in the extension host window and the extension should activate automatically and start providing diagnostics
