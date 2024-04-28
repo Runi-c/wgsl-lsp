@@ -1,0 +1,32 @@
+[package]
+name = "wgsl-lsp"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+async-lsp = { version = "0.2", features = [
+    "client-monitor",
+    "stdio",
+    "tracing",
+    "tokio",
+], default-features = false }
+bitflags = "2.4"
+lsp-types = "0.95"
+naga = { version = "0.19", features = ["wgsl-in"] }
+naga_oil = { path = "../naga_oil" }
+ropey = "1.6"
+serde_json = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+tokio = { version = "1.36", features = [
+    "rt-multi-thread",
+    "io-std",
+    "sync",
+    "time",
+    "macros",
+] }
+tokio-util = { version = "0.7", features = ["compat"] }
+tower = "0.4"
+walkdir = "2.3"
