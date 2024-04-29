@@ -3,7 +3,6 @@ use std::{
     ops::Range,
 };
 
-use async_lsp::{ErrorCode, ResponseError};
 use bitflags::bitflags;
 use lsp_types::{
     request::SemanticTokensFullRequest, MessageType, Position, SemanticToken,
@@ -23,7 +22,8 @@ bitflags! {
     #[derive(Debug)]
     struct TokenModifiers: u32 {
         const READONLY = 1;
-        const DEFAULT_LIBRARY = 2;
+        const STATIC = 2;
+        const DEFAULT_LIBRARY = 4;
     }
 }
 
@@ -83,6 +83,7 @@ pub fn semantic_tokens_capabilies() -> SemanticTokensServerCapabilities {
             ]),
             token_modifiers: Vec::from([
                 SemanticTokenModifier::READONLY,
+                SemanticTokenModifier::STATIC,
                 SemanticTokenModifier::DEFAULT_LIBRARY,
             ]),
         },
@@ -101,12 +102,7 @@ pub fn semantic_tokens_full(
 
     let cached = match st.cached_modules.get(&uri) {
         Some(cached) => cached,
-        None => {
-            return ready(Err(ResponseError::new(
-                ErrorCode::INVALID_PARAMS,
-                "Requested document does not exist",
-            )))
-        }
+        None => return ready(Ok(None)),
     };
 
     let module = &cached.module;
@@ -136,12 +132,16 @@ pub fn semantic_tokens_full(
 
     for (handle, ty) in module.types.iter() {
         if let Some(range) = module.types.get_span(handle).to_range() {
-            tokens.push(Token {
-                offset: range.start,
-                length: range.end - range.start,
-                ty: ty.into(),
-                modifiers: TokenModifiers::READONLY,
-            })
+            if let Some(name) = &ty.name {
+                let src = &source[range.start..range.end];
+                let start = range.start + src.find(name).unwrap();
+                tokens.push(Token {
+                    offset: start,
+                    length: name.len(),
+                    ty: TokenType::Type,
+                    modifiers: TokenModifiers::empty(),
+                });
+            }
         }
     }
 
@@ -150,11 +150,20 @@ pub fn semantic_tokens_full(
             let src = &source[range.start..range.end];
             if let Some(name) = &var.name {
                 let start = range.start + src.find(name).unwrap();
+                let modifiers = match var.space {
+                    AddressSpace::Handle | AddressSpace::PushConstant | AddressSpace::Uniform => {
+                        TokenModifiers::READONLY
+                    }
+                    AddressSpace::Storage { access } if !access.contains(StorageAccess::STORE) => {
+                        TokenModifiers::READONLY
+                    }
+                    _ => TokenModifiers::empty(),
+                };
                 tokens.push(Token {
                     offset: start,
                     length: name.len(),
                     ty: TokenType::Variable,
-                    modifiers: TokenModifiers::empty(),
+                    modifiers: modifiers | TokenModifiers::STATIC,
                 });
             }
         }
@@ -185,7 +194,7 @@ pub fn semantic_tokens_full(
                     AddressSpace::Handle | AddressSpace::PushConstant | AddressSpace::Uniform => {
                         TokenModifiers::READONLY
                     }
-                    AddressSpace::Storage { access } if !access.contains(StorageAccess::LOAD) => {
+                    AddressSpace::Storage { access } if !access.contains(StorageAccess::STORE) => {
                         TokenModifiers::READONLY
                     }
                     _ => TokenModifiers::empty(),
@@ -194,7 +203,7 @@ pub fn semantic_tokens_full(
                     offset,
                     length,
                     ty: TokenType::Variable,
-                    modifiers,
+                    modifiers: modifiers | TokenModifiers::STATIC,
                 })
             }
             Expression::Literal(_) => Some(Token {

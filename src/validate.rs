@@ -108,10 +108,10 @@ impl WgslServerState {
     }
 }
 
+#[derive(Debug)]
 pub enum ValidationError {
     ComposerError(ComposerError),
     ImportNotFound(Url, Range, String),
-    Custom(Url, Vec<Diagnostic>),
 }
 
 impl From<ComposerError> for ValidationError {
@@ -139,11 +139,6 @@ pub fn validate_document(st: &mut WgslServerState, uri: Url) -> NotifyResult {
                     message: format!("Import not found: {}", name),
                     ..Default::default()
                 }],
-                version: None,
-            },
-            ValidationError::Custom(uri, diags) => PublishDiagnosticsParams {
-                uri,
-                diagnostics: diags,
                 version: None,
             },
         },
@@ -205,25 +200,14 @@ fn validate_document_inner(st: &mut WgslServerState, uri: Url) -> Result<(), Val
         ..Default::default()
     })?;
 
-    let validator_result = st.validator.validate(&module).map_err(|err| {
-        ValidationError::Custom(
-            uri.clone(),
-            err.spans()
-                .map(|(span, desc)| {
-                    let location = span.location(source);
-                    Diagnostic {
-                        range: calc_range(
-                            source,
-                            location.offset as usize,
-                            (location.offset + location.length) as usize,
-                        ),
-                        message: desc.to_string() + "\n\n" + &err.emit_to_string(source),
-                        ..Default::default()
-                    }
-                })
-                .collect(),
-        )
-    }); // Don't return early here so that we can still cache the module
+    st.composer.validate = true;
+    // Use composer since it's the only one that knows the correct span positions to map the error
+    let validator_result = st.composer.make_naga_module(NagaModuleDescriptor {
+        source,
+        file_path: uri.as_str(),
+        ..Default::default()
+    }); // Don't return early here so that we can still cache the possibly invalid module
+    st.composer.validate = false;
 
     st.cached_modules.insert(
         uri.clone(),
@@ -234,7 +218,9 @@ fn validate_document_inner(st: &mut WgslServerState, uri: Url) -> Result<(), Val
         },
     );
 
-    validator_result.map(|_| ())
+    validator_result?;
+
+    Ok(())
 }
 
 pub fn calc_position(source: &str, position: usize) -> Position {
@@ -266,12 +252,14 @@ fn composer_error_to_diagnostic(
     let source = err.source.source(composer);
     let source_offset = err.source.offset();
 
+    // https://github.com/bevyengine/naga_oil/issues/76
+    // 21 is the SPAN_SHIFT
     let map_span = |rng: core::ops::Range<usize>| -> core::ops::Range<usize> {
         ((rng.start & ((1 << 21) - 1)).saturating_sub(source_offset))
             ..((rng.end & ((1 << 21) - 1)).saturating_sub(source_offset))
     };
 
-    let uri = Url::from_file_path(err.source.path(composer)).unwrap();
+    let uri = Url::from_str(err.source.path(composer)).unwrap();
     let message = err.inner.to_string();
 
     let empty_diagnostic = || -> Diagnostic {
@@ -291,13 +279,18 @@ fn composer_error_to_diagnostic(
     };
 
     let diagnostic_with_labels = |labels: Vec<(core::ops::Range<usize>, String)>| -> Diagnostic {
-        let primary_range = labels
+        let widest_label = labels
             .iter()
-            .min_by_key(|(rng, _)| rng.start)
-            .map(|(range, _)| range)
-            .unwrap_or(&(0..0));
+            .max_by(|a, b| a.0.len().cmp(&b.0.len()))
+            .unwrap();
+        let contained_label = labels.iter().find(|(rng, _)| {
+            !rng.eq(&widest_label.0)
+                && widest_label.0.start <= rng.start
+                && widest_label.0.end >= rng.end
+        });
+        let (primary_rng, _) = contained_label.unwrap_or(widest_label);
         Diagnostic {
-            range: calc_range(&source, primary_range.start, primary_range.end),
+            range: calc_range(&source, primary_rng.start, primary_rng.end),
             message: message.clone(),
             related_information: Some(
                 labels
